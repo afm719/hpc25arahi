@@ -8,8 +8,7 @@
  */
 
 
-#include "stencil.h"
-
+#include "stencil_template_parallel.h"
 
 
 // ------------------------------------------------------------------
@@ -33,7 +32,7 @@ int main(int argc, char **argv)
   plane_t   planes[2];  
   buffers_t buffers[2];
   
-  int output_energy_stat_perstep;
+  int output_energy_stat_perstep = 0;
   
   /* initialize MPI envrionment */
   {
@@ -82,8 +81,11 @@ int main(int argc, char **argv)
       /* new energy from sources */
       inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
 
+      /* halo exchange */
+      /* --------------------------------------  */
+      /*  
 
-      /* -------------------------------------- */
+
 
       // [A] fill the buffers, and/or make the buffers' pointers pointing to the correct position
 
@@ -96,8 +98,78 @@ int main(int argc, char **argv)
 
       /* --------------------------------------  */
       /* update grid points */
+
+      const int sizex = planes[current].size[_x_]+2;
+      const int sizey = planes[current].size[_y_]+2;
+
+      //package the west buffer
+      if ( neighbours[WEST] != MPI_PROC_NULL )
+        for ( int j = 0; j < sizey-2; j++ )
+          buffers[SEND][WEST][j] = planes[current].data[ (j+1)*sizex + 1 ]; 
+
+      //package the east buffer
+      if ( neighbours[EAST] != MPI_PROC_NULL )
+        for ( int j = 0; j < sizey-2; j++ )
+          buffers[SEND][EAST][j] = planes[current].data[ (j+1)*sizex + sizex - 2 ];   
       
+
+      int req_count= 0;
+      if ( neighbours[NORTH] != MPI_PROC_NULL )
+        {
+          MPI_Irecv( &planes[current].data[0*sizex + 1], sizex-2, MPI_DOUBLE,
+                     neighbours[NORTH], 123, myCOMM_WORLD, &reqs[req_count++] );
+        } 
+      if ( neighbours[SOUTH] != MPI_PROC_NULL )
+        {
+          MPI_Irecv( &planes[current].data[(sizey-1)*sizex + 1], sizex-2, MPI_DOUBLE,
+                     neighbours[SOUTH], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }
+      if ( neighbours[WEST] != MPI_PROC_NULL )
+        {
+          MPI_Irecv( &planes[current].data[1*sizex + 0], sizey-2, MPI_DOUBLE,
+                     neighbours[WEST], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }
+      if ( neighbours[EAST] != MPI_PROC_NULL )
+        {
+          MPI_Irecv( &planes[current].data[1*sizex + (sizex-1)], sizey-2, MPI_DOUBLE,
+                     neighbours[EAST], 123, myCOMM_WORLD, &reqs[req_count++] );
+        } 
+
+      if ( neighbours[NORTH] != MPI_PROC_NULL )
+        {
+          MPI_Isend( &buffers[SEND][NORTH][0], sizex-2, MPI_DOUBLE,
+                     neighbours[NORTH], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }
+      if ( neighbours[SOUTH] != MPI_PROC_NULL )
+        {
+          MPI_Isend( &buffers[SEND][SOUTH][0], sizex-2, MPI_DOUBLE,
+                     neighbours[SOUTH], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }
+      if ( neighbours[WEST] != MPI_PROC_NULL )
+        {
+          MPI_Isend( &buffers[SEND][WEST][0], sizey-2, MPI_DOUBLE,
+                     neighbours[WEST], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }
+      if ( neighbours[EAST] != MPI_PROC_NULL )
+        {
+          MPI_Isend( &buffers[SEND][EAST][0], sizey-2, MPI_DOUBLE,
+                     neighbours[EAST], 123, myCOMM_WORLD, &reqs[req_count++] );
+        }   
+
+
+
+
       update_plane( periodic, N, &planes[current], &planes[!current] );
+      MPI_Waitall( req_count, reqs, MPI_STATUSES_IGNORE );
+
+      /* --------------------------------------  */
+
+      if(neighbours[WEST] != MPI_PROC_NULL)
+        for(int j=0; j<sizey-2; j++)
+          planes[current].data[(j+1)*sizex + 0] = buffers[RECV][WEST][j];   
+      if(neighbours[EAST] != MPI_PROC_NULL)
+        for(int j=0; j<sizey-2; j++)
+          planes[current].data[(j+1)*sizex + (sizex-1)] = buffers[RECV][EAST][j];
 
       /* output if needed */
       if ( output_energy_stat_perstep )
@@ -112,7 +184,7 @@ int main(int argc, char **argv)
 
   output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
   
-  memory_release( buffers, planes );
+  memory_release( planes, buffers);
   
   
   MPI_Finalize();
@@ -174,6 +246,7 @@ int initialize ( MPI_Comm *Comm,
   int halt = 0;
   int ret;
   int verbose = 0;
+  
   
   // ··································································
   // set deffault values
@@ -405,7 +478,7 @@ int initialize ( MPI_Comm *Comm,
   // ··································································
   // allocae the needed memory
   //
-  ret = memory_allocate( plans, ... 
+  ret = memory_allocate( neighbours, N, buffers, planes);
   
 
   // ··································································
@@ -600,6 +673,25 @@ int memory_allocate ( const int       *neighbours  ,
   //
 
 
+  const int sizey = planes_ptr[OLD].size[_y_];
+
+  if ( neighbours[WEST] != MPI_PROC_NULL )
+    {
+      buffers_ptr[SEND][WEST] = (double*)malloc( sizey * sizeof(double) );
+      if ( buffers_ptr[SEND][WEST] == NULL )
+  // manage the malloc fail 
+  ;
+      memset ( buffers_ptr[SEND][WEST], 0, sizey * sizeof(double) );
+    }   
+
+  if ( neighbours[EAST] != MPI_PROC_NULL )
+    {
+      buffers_ptr[SEND][EAST] = (double*)malloc( sizey * sizeof(double) );
+      if ( buffers_ptr[SEND][EAST] == NULL )
+  // manage the malloc fail
+  ;
+      memset ( buffers_ptr[SEND][EAST], 0, sizey * sizeof(double) );
+    }
 
 
   // ··················································
@@ -610,22 +702,27 @@ int memory_allocate ( const int       *neighbours  ,
 
 
 
- int memory_release ( plane_t   *planes,
-		      ....
-		     )
-  
+ int memory_release ( plane_t   *planes, buffers_t *buffers)
+
 {
 
   if ( planes != NULL )
     {
       if ( planes[OLD].data != NULL )
-	free (planes[OLD].data);
-      
+        free (planes[OLD].data);
+
       if ( planes[NEW].data != NULL )
-	free (planes[NEW].data);
+        free (planes[NEW].data);
     }
 
-      
+  if ( buffers != NULL )
+    {
+      // Only free what was allocated
+      if ((*buffers)[SEND][WEST] != NULL) free((*buffers)[SEND][WEST]);
+      if ((*buffers)[SEND][EAST] != NULL) free((*buffers)[SEND][EAST]);
+      // If you ever allocate NORTH/SOUTH, add them here
+    }
+
   return 0;
 }
 

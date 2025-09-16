@@ -78,7 +78,8 @@ int initialize ( MPI_Comm *,
                  buffers_t * );
 
 
-int memory_release (plane_t   * );
+int memory_release (plane_t *planes, buffers_t *buffers);
+
 
 
 int output_energy_stat ( int      ,
@@ -112,8 +113,7 @@ inline int inject_energy ( const int      periodic,
                 {
                     if ( (N[_x_] == 1)  )
                         {
-                            // propagate the boundaries if needed
-                            // check the serial version
+                            
                         }
                     
                     if ( (N[_y_] == 1) )
@@ -159,6 +159,8 @@ inline int update_plane ( const int      periodic,
     double * restrict old = oldplane->data;
     double * restrict new = newplane->data;
     
+    
+    #pragma omp parallel for
     for (uint j = 1; j <= ysize; j++)
         for ( uint i = 1; i <= xsize; i++)
             {
@@ -228,6 +230,8 @@ inline int get_total_energy( plane_t *plane,
     //       (ii) ask the compiler to do it
     // for instance
     // #pragma GCC unroll 4
+
+    #pragma omp parallel for reduction(+:totenergy)
     for ( int j = 1; j <= ysize; j++ )
         for ( int i = 1; i <= xsize; i++ )
             totenergy += data[ IDX(i, j) ];
