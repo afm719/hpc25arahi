@@ -78,13 +78,21 @@ int initialize(MPI_Comm *,
                plane_t *,
                buffers_t *);
 
-int memory_release(plane_t *, buffers_t *buffers);
+int memory_release(plane_t *planes, buffers_t *buffers);
 
 int output_energy_stat(int,
                        plane_t *,
                        double,
                        int,
-                       MPI_Comm *);
+                       MPI_Comm);
+
+void output_full_grid(int Me,
+                      int Ntasks,
+                      vec2_t mysize,
+                      plane_t* plane,
+                      MPI_Comm comm);
+
+
 
 inline int inject_energy(const int periodic,
                          const int Nsources,
@@ -200,8 +208,8 @@ inline int update_plane(const int periodic,
             {
                 // west from east
                 new[IDX(i, 0)] = new[IDX(i, fysize - 2)];
-                // east from west
-                new[IDX(i, fysize - 1)] = new[IDX(i, 1)];
+                // east from west -> This was writing out of bounds
+                new[IDX(i, ysize + 1)] = new[IDX(i, 1)];
             }
         }
     }
@@ -332,8 +340,7 @@ inline int update_borders(const int periodic,
                           old[IDX(1, j - 1)] + old[IDX(1, j + 1)]) / 4.0 / 2.0;
         // Right border (i=xsize)
         new[IDX(xsize, j)] = old[IDX(xsize, j)] / 2.0 +
-                             (old[IDX(xsize - 1, j)] + old      
-[IDX(xsize + 1, j)] +
+                             (old[IDX(xsize - 1, j)] + old[IDX(xsize + 1, j)] +
                               old[IDX(xsize, j - 1)] + old[IDX(xsize, j + 1)]) / 4.0 / 2.0;
     }   
 #undef IDX
