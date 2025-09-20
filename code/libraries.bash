@@ -8,7 +8,6 @@
 
 set -e
 
-
 if command -v apt-get &> /dev/null; then
     
     sudo apt-get update

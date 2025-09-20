@@ -1,15 +1,65 @@
 /*
 
 /*
- *
- *  mysizex   :   local x-extendion of your patch
- *  mysizey   :   local y-extension of your patch
- *
+ * mysizex : local x-extendion of your patch
+ * mysizey : local y-extension of your patch
+ * 
  */
 
 
 #include "stencil_template_parallel.h"
 
+
+
+/**
+ * Manages the exchange of halo (ghost) cell data between a process and its neighbors.
+ *
+ * This function prepares send buffers (copying for non-contiguous East/West data,
+ * pointing for contiguous North/South data) and posts non-blocking MPI sends
+ * and receives for all four directions. This allows for overlapping communication
+ * with computation.
+ */
+
+void exchange_halos(plane_t* plane, uint neighbours[4], buffers_t buffers[2], MPI_Comm comm, MPI_Request* reqs, int* req_count) {
+    uint sizeX = plane->size[_x_];
+    uint sizeY = plane->size[_y_];
+    uint frame_size = sizeX + 2;
+
+    // [A] Prepare buffers and pointers
+    // Manual copy for WEST and EAST buffers
+    if (neighbours[WEST] != MPI_PROC_NULL) {
+        for (uint j = 0; j < sizeY; j++) {
+            buffers[SEND][WEST][j] = plane->data[(j + 1) * frame_size + 1];
+        }
+    }
+    if (neighbours[EAST] != MPI_PROC_NULL) {
+        for (uint j = 0; j < sizeY; j++) {
+            buffers[SEND][EAST][j] = plane->data[(j + 1) * frame_size + sizeX];
+        }
+    }
+
+    // Direct pointers for NORTH and SOUTH (contiguous data)
+    if (neighbours[NORTH] != MPI_PROC_NULL) {
+        buffers[SEND][NORTH] = &(plane->data[frame_size + 1]);
+        buffers[RECV][NORTH] = &(plane->data[1]);
+    }
+    if (neighbours[SOUTH] != MPI_PROC_NULL) {
+        buffers[SEND][SOUTH] = &(plane->data[sizeY * frame_size + 1]);
+        buffers[RECV][SOUTH] = &(plane->data[(sizeY + 1) * frame_size + 1]);
+    }
+
+    // [B] Post non-blocking sends and receives
+    *req_count = 0;
+    for (int d = 0; d < 4; d++) {
+        if (neighbours[d] != MPI_PROC_NULL) {
+            int count = (d < 2) ? sizeX : sizeY;
+            MPI_Irecv(buffers[RECV][d], count, MPI_DOUBLE, neighbours[d], 123, comm, &reqs[*req_count]); // #pragma endregion
+            (*req_count)++;
+            MPI_Isend(buffers[SEND][d], count, MPI_DOUBLE, neighbours[d], 123, comm, &reqs[*req_count]);
+            (*req_count)++;
+        }
+    }
+}
 
 
 // ------------------------------------------------------------------
@@ -94,52 +144,13 @@ int main(int argc, char **argv)
       inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
       compute_time += MPI_Wtime();
 
-      /* -------------------------------------- */
-
-      // [A] fill the buffers, and/or make the buffers' pointers pointing to the correct position
-
-      if (neighbours[WEST] != MPI_PROC_NULL) {
-          #pragma GCC unroll 4
-          for (uint j = 0; j < sizeY; j++) {
-              buffers[SEND][WEST][j] = planes[current].data[(j+1)*frame_size + 1];
-          }
-      }
-
-      
-      if (neighbours[EAST] != MPI_PROC_NULL) {
-          #pragma GCC unroll 4
-          for (uint j = 0; j < sizeY; j++) {
-              buffers[SEND][EAST][j] = planes[current].data[(j+1)*frame_size + sizeX]; // EAST buffer filled  
-          }
-      } // EAST buffer filled
-
-      //Now is necesary the grid point to be contiguous in memory
-      
-      if (neighbours[NORTH] != MPI_PROC_NULL) {
-        buffers[SEND][NORTH] = &(planes[current].data[frame_size + 1]);
-        buffers[RECV][NORTH] = &(planes[current].data[1]);
-      }
-      if (neighbours[SOUTH] != MPI_PROC_NULL) {
-        buffers[SEND][SOUTH] = &(planes[current].data[sizeY*frame_size + 1]);
-        buffers[RECV][SOUTH] = &(planes[current].data[(sizeY+1)*frame_size + 1]);
-      }
-      // [B] perfoem the halo communications
-      //     (1) use Send / Recv
-      //     (2) use Isend / Irecv
-      //         --> can you overlap communication and compution in this way?
-      
+      /* -------------------------------------- */      
       comm_time -= MPI_Wtime();
-      #pragma GCC unroll 4
-      for (int d = 0; d < 4; d++) {
-          if (neighbours[d] != MPI_PROC_NULL) {
-              MPI_Irecv(buffers[RECV][d], (d < 2 ? sizeX : sizeY), MPI_DOUBLE, neighbours[d], 123, myCOMM_WORLD, &reqs[req_count++]);
-              MPI_Isend(buffers[SEND][d], (d < 2 ? sizeX : sizeY), MPI_DOUBLE, neighbours[d], 123, myCOMM_WORLD, &reqs[req_count++]);
-          }
-      }
+      exchange_halos(&planes[current], neighbours, buffers, myCOMM_WORLD, reqs, &req_count);
       comm_time += MPI_Wtime();
+
       compute_time -= MPI_Wtime();
 
-      // [C] copy the haloes data
 
       /* --------------------------------------  */
       /* update grid points */
@@ -217,21 +228,46 @@ int main(int argc, char **argv)
 
   comm_time += wait_time;
 
-  double max_total_time, max_comm_time, max_compute_time, max_wait_time;
-  MPI_Reduce( &total_time, &max_total_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD );
-  MPI_Reduce( &comm_time, &max_comm_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD );
-  MPI_Reduce( &compute_time, &max_compute_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD );
-  MPI_Reduce( &wait_time, &max_wait_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD );
-  if ( Rank == 0 )
-    printf( "max total time is %g sec, "
-      "max comm time is %g sec, "
-      "max compute time is %g sec, "
-      "max wait time is %g sec\n",
-      max_total_time,
-      max_comm_time,
-      max_compute_time,
-      max_wait_time
-      );
+  double timings[4] = {total_time, comm_time, compute_time, wait_time};
+  double max_timings[4], min_timings[4], sum_timings[4];
+
+  MPI_Reduce(timings, max_timings, 4, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD);
+  MPI_Reduce(timings, min_timings, 4, MPI_DOUBLE, MPI_MIN, 0, myCOMM_WORLD);
+  MPI_Reduce(timings, sum_timings, 4, MPI_DOUBLE, MPI_SUM, 0, myCOMM_WORLD);
+
+  if (Rank == 0) {
+      printf("\n--- Performance Metrics (over %d tasks) ---\n", Ntasks);
+      const char *metric_names[] = {"Total Time", "Communication Time", "Computation Time", "Wait Time"};
+      for (int i = 0; i < 4; ++i) {
+          printf("%-20s: Max: %8.4f s | Min: %8.4f s | Avg: %8.4f s\n",
+                 metric_names[i],
+                 max_timings[i],
+                 min_timings[i],
+                 sum_timings[i] / Ntasks);
+      }
+
+      // --- CSV Output ---
+      FILE *csv_file = fopen("timings.csv", "a");
+      if (csv_file == NULL) {
+          perror("Error opening timings.csv");
+      } else {
+          // If the file is empty, write the header
+          fseek(csv_file, 0, SEEK_END);
+          if (ftell(csv_file) == 0) {
+              fprintf(csv_file, "Processes,Total_Max,Total_Min,Total_Avg,Comm_Max,Comm_Min,Comm_Avg,Compute_Max,Compute_Min,Compute_Avg,Wait_Max,Wait_Min,Wait_Avg\n");
+          }
+          // Write the data for the current run
+          fprintf(csv_file, "%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\n",
+                  Ntasks,
+                  max_timings[0], min_timings[0], sum_timings[0] / Ntasks, // Total
+                  max_timings[1], min_timings[1], sum_timings[1] / Ntasks, // Comm
+                  max_timings[2], min_timings[2], sum_timings[2] / Ntasks, // Compute
+                  max_timings[3], min_timings[3], sum_timings[3] / Ntasks); // Wait
+          fclose(csv_file);
+          printf("\nPerformance data appended to timings.csv\n");
+      }
+      printf("-------------------------------------------\n");
+  }
   
   
   
@@ -312,9 +348,9 @@ int memory_allocate ( const int       *neighbours  ,
       
      */
 
-  printf("[DEBUG] Dentro de memory_allocate...\n");
-  printf("        'planes_ptr' RECIBIDO con la dirección: %p\n", (void*)planes_ptr);
-  printf("        'buffers_ptr' RECIBIDO con la dirección: %p\n", (void*)buffers_ptr);
+  printf("[DEBUG] Inside of memory_allocate...\n");
+  printf("        'planes_ptr' RECV with the address: %p\n", (void*)planes_ptr);
+  printf("        'buffers_ptr' RECV with the address: %p\n", (void*)buffers_ptr);
   fflush(stdout);
   if (planes_ptr == NULL || buffers_ptr == NULL) {
         printf("Error: An invalid NULL pointer was passed to memory_allocate.\n");
@@ -513,7 +549,7 @@ int initialize ( MPI_Comm *Comm,
 
   // ...
 
-  if ( (*S)[_x_] < 1 || (*S)[_y_] < 1 ) {
+  if ( (*S)[_x_] < 1 || (*S)[_y_] < 1 ) { 
     if ( Me == 0 )
       printf("invalid size of the plate\n");
     return 2;
@@ -675,9 +711,9 @@ int initialize ( MPI_Comm *Comm,
   // ··································································
   // allocae the needed memory
   //
-  printf("[DEBUG] Llamando a memory_allocate...\n");
-  printf("        'planes' ENVIADO con la dirección: %p\n", (void*)planes);
-  printf("        'buffers' ENVIADO con la dirección: %p\n", (void*)buffers);
+  printf("[DEBUG] Calling to memory_allocate...\n");
+  printf("        'planes' SEND with the address:%p\n", (void*)planes);
+  printf("        'buffers' SEND with the address: %p\n", (void*)buffers);
   fflush(stdout);
   ret = memory_allocate(neighbours, mysize, buffers, planes);
   
@@ -790,6 +826,43 @@ int initialize_sources( int       Me,
   return 0;
 }
 
+void output_full_grid(int Me, int Ntasks, vec2_t mysize, plane_t* plane, MPI_Comm comm) {
+    // This function is for debugging and visualization.
+    // It gathers the subgrids from all processes to rank 0 and prints the full grid.
+
+    // Only rank 0 will allocate memory for the full grid and print.
+    if (Me == 0) {
+        // Note: This is a simplified implementation for debugging.
+        // A real implementation would need to know the global size and the
+        // size of each process's subgrid to assemble it correctly.
+        // For now, we'll just print the local grid of each process sequentially.
+        printf("--- Full Grid Output (Process-by-Process) ---\n");
+    }
+
+    for (int rank = 0; rank < Ntasks; ++rank) {
+        MPI_Barrier(comm);
+        if (Me == rank) {
+            printf("--- Rank %d (local size %u x %u) ---\n", Me, mysize[_x_], mysize[_y_]);
+            uint sizeX = plane->size[_x_];
+            uint sizeY = plane->size[_y_];
+            uint frame_width = sizeX + 2;
+
+            // Print with halo cells for context
+            for (uint j = 0; j < sizeY + 2; ++j) {
+                for (uint i = 0; i < sizeX + 2; ++i) {
+                    printf("%6.2f ", plane->data[j * frame_width + i]);
+                }
+                printf("\n");
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+    }
+    MPI_Barrier(comm);
+    if (Me == 0) {
+        printf("--- End of Full Grid Output ---\n");
+    }
+}
 
 
  int memory_release ( plane_t   *planes,

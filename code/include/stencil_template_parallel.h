@@ -50,15 +50,20 @@ extern int update_plane(const int,
                         const plane_t *,
                         plane_t *);
 
+/*
+ *
+ * This function prepares send buffers (copying for non-contiguous East/West data,
+ * pointing for contiguous North/South data) and posts non-blocking MPI sends
+ * and receives for all four directions. This allows for overlapping communication
+ * with computation.
+ */
+extern void exchange_halos(plane_t* plane, uint neighbours[4], buffers_t buffers[2], MPI_Comm comm, MPI_Request* reqs, int* req_count);
+
 extern int get_total_energy(plane_t *,
                             double *);
-extern int update_interior(const vec2_t   N, const plane_t *oldplane, plane_t *newplane); // NEW FUNCTION
-extern int update_borders(const int periodic, const vec2_t N, const plane_t *oldplane, plane_t *newplane); // NEW FUNCTION
-/*
-Explaination of the new functions:
-update_interior: updates the interior points of the plane (excluding ghost cells)
-update_borders: updates the border points of the plane (including ghost cells if periodic)
-*/
+extern int update_interior(const vec2_t   N, const plane_t *oldplane, plane_t *newplane); // NEW FUNCTION update_interior: updates the interior points of the plane (excluding ghost cells)
+extern int update_borders(const int periodic, const vec2_t N, const plane_t *oldplane, plane_t *newplane); // NEW FUNCTION update_borders: updates the border points of the plane (including ghost cells if periodic)
+
 
 int initialize(MPI_Comm *,
                int,
@@ -293,52 +298,28 @@ inline int update_borders(const int periodic,
 
 #define IDX(i, j) ((j) * fxsize + (i))  
 
-    if (periodic) {
-        if (N[_x_] == 1) {
-            // propagate the boundaries as needed
-            // check the serial version
-            #pragma GCC unroll 4
-            for (uint j = 1; j <= ysize; j++) {
-                // north from south
-                new[IDX(0, j)] = new[IDX(fxsize - 2, j)];
-                // south from north
-                new[IDX(fxsize - 1, j)] = new[IDX(1, j)];
-            }
-        }
-
-        if (N[_y_] == 1) {
-            // propagate the boundaries as needed
-            // check the serial version
-            #pragma GCC unroll 4
-            for (uint i = 1; i <= xsize; i++) {
-                // west from east
-                new[IDX(i, 0)] = new[IDX(i, fysize - 2)];
-                // east from west
-                new[IDX(i, fysize - 1)] = new[IDX(i, 1)];
-            }
-        }
-    }
-
-    // Now update the border points excluding corners to avoid double updates
+    // Update top and bottom borders (j=1 and j=ysize)
     #pragma omp parallel for
     for (uint i = 1; i <= xsize; i++) {
-        // Top border (j=1)
+        // Top border (j=1), using halo cell at j=0
         new[IDX(i, 1)] = old[IDX(i, 1)] / 2.0 +
                          (old[IDX(i - 1, 1)] + old[IDX(i + 1, 1)] +
                           old[IDX(i, 0)] + old[IDX(i, 2)]) / 4.0 / 2.0;
-        // Bottom border (j=ysize)
+        // Bottom border (j=ysize), using halo cell at j=ysize+1
         new[IDX(i, ysize)] = old[IDX(i, ysize)] / 2.0 +
                              (old[IDX(i - 1, ysize)] + old[IDX(i + 1, ysize)] +
                               old[IDX(i, ysize - 1)] + old[IDX(i, ysize + 1)]) / 4.0 / 2.0;
     }
 
+    // Update left and right borders (i=1 and i=xsize), excluding corners
+    // which were already computed in the loop above.
     #pragma omp parallel for
-    for (uint j = 2; j < ysize; j++) { // Exclude corners already updated
-        // Left border (i=1)
+    for (uint j = 2; j < ysize; j++) {
+        // Left border (i=1), using halo cell at i=0
         new[IDX(1, j)] = old[IDX(1, j)] / 2.0 +
                          (old[IDX(0, j)] + old[IDX(2, j)] +
                           old[IDX(1, j - 1)] + old[IDX(1, j + 1)]) / 4.0 / 2.0;
-        // Right border (i=xsize)
+        // Right border (i=xsize), using halo cell at i=xsize+1
         new[IDX(xsize, j)] = old[IDX(xsize, j)] / 2.0 +
                              (old[IDX(xsize - 1, j)] + old[IDX(xsize + 1, j)] +
                               old[IDX(xsize, j - 1)] + old[IDX(xsize, j + 1)]) / 4.0 / 2.0;
