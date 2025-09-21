@@ -6,7 +6,7 @@
 #SBATCH --array=0-5 # 6 jobs for 1, 2, 4, 8, 16, 32 nodes
 
 # --- Experiment Configuration ---
-EXEC="./stencil_parallel"
+EXEC="../code/stencil_parallel"
 SIZE_X=40000  # Fixed problem size
 SIZE_Y=40000
 ITER=200

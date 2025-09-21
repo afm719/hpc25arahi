@@ -8,7 +8,7 @@
 #SBATCH --array=0-8 # 9 jobs for 9 thread counts
 
 # --- Experiment Configuration ---
-EXEC="./stencil_parallel"
+EXEC="../code/stencil_parallel"
 SIZE_X=20000
 SIZE_Y=20000
 ITER=100

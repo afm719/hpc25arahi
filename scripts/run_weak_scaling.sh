@@ -6,7 +6,7 @@
 #SBATCH --array=0-5 # 6 jobs for 1, 2, 4, 8, 16, 32 nodes
 
 # --- Experiment Configuration ---
-EXEC="./stencil_parallel"
+EXEC="../code/stencil_parallel"
 BASE_SIZE_PER_NODE=10000 # Problem size dimension per node
 ITER=200
 OUT_FILE="plots/weak/weak_scaling_results.csv"

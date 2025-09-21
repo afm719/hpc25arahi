@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Local Test Configuration ---
-EXEC="code/stencil_parallel"
+EXEC="../code/stencil_parallel"
 SIZE_X=100
 SIZE_Y=100
 ITER=10
