@@ -2,46 +2,37 @@
 #SBATCH --job-name=weak_scale
 #SBATCH --partition=dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
-#SBATCH --time=00:20:00
-#SBATCH --array=0-5 # 6 jobs for 1, 2, 4, 8, 16, 32 nodes
+#SBATCH --time=00:30:00
 
-# --- Experiment Configuration ---
-EXEC="../code/stencil_parallel"
-BASE_SIZE_PER_NODE=10000 # Problem size dimension per node
-ITER=200
-OUT_FILE="plots/weak/weak_scaling_results.csv"
 
-# --- Parallel Configuration ---
-THREADS_PER_TASK=8
-TASKS_PER_NODE=14
+# --- Base Directory ---
+BASE_DIR=$SLURM_SUBMIT_DIR
 
-# --- Modules and Environment ---
-module load gcc/12.2.0
+# --- Test Configuration (values are passed from the launcher via --export) ---
+EXEC="$BASE_DIR/code/stencil_parallel"
+OUT_FILE="$BASE_DIR/plots/weak_scaling_results.csv"
+
+# --- Execution Environment ---
+module purge
 module load openmpi/4.1.6--gcc--12.2.0
 export OMP_NUM_THREADS=$THREADS_PER_TASK
 export OMP_PLACES=threads
 export OMP_PROC_BIND=close
 
-# --- SLURM Job Array Logic ---
-declare -a nodes_array=(1 2 4 8 16 32)
-NODES=${nodes_array[$SLURM_ARRAY_TASK_ID]}
-TOTAL_TASKS=$(( $TASKS_PER_NODE * $NODES ))
+echo "Running Weak Scaling on $SLURM_NNODES nodes with $SLURM_NTASKS tasks (Size: ${SIZE_X}x${SIZE_Y})..."
 
-# Calculate problem size to keep workload per task constant
-# Workload ~ SIZE_X * SIZE_Y. If N nodes, total area ~ N. So, SIZE_X ~ sqrt(N)
-SIZE_X=$(echo "sqrt($NODES) * $BASE_SIZE_PER_NODE" | bc -l | awk '{printf "%d", $1}')
-SIZE_Y=$BASE_SIZE_PER_NODE
+# --- Execution and Result Capture ---
+PROGRAM_OUTPUT=$(srun $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER)
+METRICS_LINE=$(echo "$PROGRAM_OUTPUT" | grep "CSV_DATA")
+TOTAL_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $2}')
+COMM_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $3}')
+COMP_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $4}')
+WAIT_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $5}')
 
-# The first job creates the CSV header
-if [ $SLURM_ARRAY_TASK_ID -eq 0 ]; then
-    echo "Nodes,Total_Tasks,Size_X,Size_Y,Total_Time" > $OUT_FILE
+# --- Safe Result Writing ---
+# We add Size_X and Size_Y to the CSV output
+if [ -z "$TOTAL_TIME" ]; then
+    flock -x $OUT_FILE -c "echo $SLURM_NNODES,$SLURM_NTASKS,$SIZE_X,$SIZE_Y,ERROR,ERROR,ERROR,ERROR >> $OUT_FILE"
+else
+    flock -x $OUT_FILE -c "echo $SLURM_NNODES,$SLURM_NTASKS,$SIZE_X,$SIZE_Y,$TOTAL_TIME,$COMM_TIME,$COMP_TIME,$WAIT_TIME >> $OUT_FILE"
 fi
-
-echo "Running Weak Scaling on $NODES nodes (Size: ${SIZE_X}x${SIZE_Y})..."
-
-# Execute and parse the max total time
-TIME=$(srun -N $NODES -n $TOTAL_TASKS --ntasks-per-node=$TASKS_PER_NODE --cpus-per-task=$THREADS_PER_TASK \
-     $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER | grep "Total Time" | awk '{print $4}')
-
-# Append the result safely to the CSV file
-flock -x $OUT_FILE -c "echo $NODES,$TOTAL_TASKS,$SIZE_X,$SIZE_Y,$TIME >> $OUT_FILE"

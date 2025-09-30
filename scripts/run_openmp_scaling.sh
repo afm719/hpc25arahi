@@ -3,47 +3,57 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
+#SBATCH --cpus-per-task=112
 #SBATCH --time=00:30:00
 #SBATCH --job-name=openmp_scale
 #SBATCH --array=0-8 # 9 jobs for 9 thread counts
 
-# --- Experiment Configuration ---
-EXEC="../code/stencil_parallel"
-SIZE_X=20000
-SIZE_Y=20000
+# --- Base Directory ---
+BASE_DIR=$SLURM_SUBMIT_DIR
+
+# --- Test Configuration ---
+EXEC="$BASE_DIR/code/stencil_parallel"
+SIZE_X=2000
+SIZE_Y=2000
 ITER=100
-OUT_FILE="plots/openmp_scaling/openmp_scaling_results.csv"
+OUT_FILE="$BASE_DIR/plots/openmp_scaling/openmp_scaling_metrics.csv"
 
-# --- Modules and Environment ---
-module load gcc/12.2.0
+# --- Execution Environment ---
+module purge
 module load openmpi/4.1.6--gcc--12.2.0
-
-# --- Set Thread Affinity (good for performance) ---
-# OMP_PLACES=threads: Each thread gets its own set of hardware resources.
-# OMP_PROC_BIND=close: Binds threads closely to the master thread's resources.
 export OMP_PLACES=threads
 export OMP_PROC_BIND=close
 
-# Array of thread counts to test
+# --- Compilation and CSV Header (only by the first job) ---
+if [ $SLURM_ARRAY_TASK_ID -eq 0 ]; then
+    # New header with all metrics
+    echo "Threads,Total_Time,Comm_Time,Compute_Time,Wait_Time" > $OUT_FILE
+fi
+
+# --- Job Array Logic ---
 declare -a thread_counts=(1 2 4 8 16 32 56 84 112)
-# Get the thread count for this specific job array task
 THREADS=${thread_counts[$SLURM_ARRAY_TASK_ID]}
 export OMP_NUM_THREADS=$THREADS
 
-# The first job in the array creates the CSV header
-if [ $SLURM_ARRAY_TASK_ID -eq 0 ]; then
-    echo "Threads,Total_Time" > $OUT_FILE
-fi
+echo "Running test with $THREADS threads..."
 
-echo "Running OpenMP test with $THREADS threads..."
+# --- Execution and Result Capture ---
+PROGRAM_OUTPUT=$(srun --cpus-per-task=$THREADS $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER)
 
-# Execute and parse the max total time from the output
-TIME=$(srun --cpus-per-task=$THREADS $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER | grep "Total Time" | awk '{print $4}')
+# --- Advanced Parsing for All Metrics ---
+# Capture the specific CSV_DATA line your C program now prints
+METRICS_LINE=$(echo "$PROGRAM_OUTPUT" | grep "CSV_DATA")
 
-# Append the result safely to the CSV file
-flock -x $OUT_FILE -c "echo $THREADS,$TIME >> $OUT_FILE"
+# Extract each metric using awk with a comma as a separator
+TOTAL_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $2}')
+COMM_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $3}')
+COMP_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $4}')
+WAIT_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $5}')
 
-# The last job signals completion
-if [ $SLURM_ARRAY_TASK_ID -eq 8 ]; then
-    echo "OpenMP scaling study finished. Results are in $OUT_FILE"
+
+# --- Safe Result Writing ---
+if [ -z "$TOTAL_TIME" ]; then
+    flock -x $OUT_FILE -c "echo $THREADS,ERROR,ERROR,ERROR,ERROR >> $OUT_FILE"
+else
+    flock -x $OUT_FILE -c "echo $THREADS,$TOTAL_TIME,$COMM_TIME,$COMP_TIME,$WAIT_TIME >> $OUT_FILE"
 fi

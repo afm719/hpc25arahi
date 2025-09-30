@@ -57,7 +57,7 @@ extern int update_plane(const int,
  * and receives for all four directions. This allows for overlapping communication
  * with computation.
  */
-extern void exchange_halos(plane_t* plane, uint neighbours[4], buffers_t buffers[2], MPI_Comm comm, MPI_Request* reqs, int* req_count);
+extern void exchange_halos(plane_t* plane, uint neighbours[4], MPI_Comm comm, MPI_Request* reqs, int* req_count, MPI_Datatype col_type)
 
 extern int get_total_energy(plane_t *,
                             double *);

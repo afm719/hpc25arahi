@@ -4,7 +4,7 @@
 MPICC = mpicc #compiler for parallel code
 
 
-CFLAGS = -g -O0 -Iinclude 
+CFLAGS = -03 -march=native -Iinclude 
 
 OMPFLAGS = -fopenmp
 

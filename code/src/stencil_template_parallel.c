@@ -20,44 +20,37 @@
  * with computation.
  */
 
-void exchange_halos(plane_t* plane, uint neighbours[4], buffers_t buffers[2], MPI_Comm comm, MPI_Request* reqs, int* req_count) {
+void exchange_halos(plane_t* plane, uint neighbours[4], MPI_Comm comm, MPI_Request* reqs, int* req_count, MPI_Datatype col_type) {
     uint sizeX = plane->size[_x_];
     uint sizeY = plane->size[_y_];
     uint frame_size = sizeX + 2;
 
-    // [A] Prepare buffers and pointers
-    // Manual copy for WEST and EAST buffers
-    if (neighbours[WEST] != MPI_PROC_NULL) {
-        for (uint j = 0; j < sizeY; j++) {
-            buffers[SEND][WEST][j] = plane->data[(j + 1) * frame_size + 1];
-        }
-    }
-    if (neighbours[EAST] != MPI_PROC_NULL) {
-        for (uint j = 0; j < sizeY; j++) {
-            buffers[SEND][EAST][j] = plane->data[(j + 1) * frame_size + sizeX];
-        }
-    }
+    *req_count = 0;
 
-    // Direct pointers for NORTH and SOUTH (contiguous data)
     if (neighbours[NORTH] != MPI_PROC_NULL) {
-        buffers[SEND][NORTH] = &(plane->data[frame_size + 1]);
-        buffers[RECV][NORTH] = &(plane->data[1]);
+        MPI_Irecv(&(plane->data[1]), sizeX, MPI_DOUBLE, neighbours[NORTH], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
+        MPI_Isend(&(plane->data[frame_size + 1]), sizeX, MPI_DOUBLE, neighbours[NORTH], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
     }
     if (neighbours[SOUTH] != MPI_PROC_NULL) {
-        buffers[SEND][SOUTH] = &(plane->data[sizeY * frame_size + 1]);
-        buffers[RECV][SOUTH] = &(plane->data[(sizeY + 1) * frame_size + 1]);
+        MPI_Irecv(&(plane->data[(sizeY + 1) * frame_size + 1]), sizeX, MPI_DOUBLE, neighbours[SOUTH], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
+        MPI_Isend(&(plane->data[sizeY * frame_size + 1]), sizeX, MPI_DOUBLE, neighbours[SOUTH], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
     }
 
-    // [B] Post non-blocking sends and receives
-    *req_count = 0;
-    for (int d = 0; d < 4; d++) {
-        if (neighbours[d] != MPI_PROC_NULL) {
-            int count = (d < 2) ? sizeX : sizeY;
-            MPI_Irecv(buffers[RECV][d], count, MPI_DOUBLE, neighbours[d], 123, comm, &reqs[*req_count]); // #pragma endregion
-            (*req_count)++;
-            MPI_Isend(buffers[SEND][d], count, MPI_DOUBLE, neighbours[d], 123, comm, &reqs[*req_count]);
-            (*req_count)++;
-        }
+    if (neighbours[WEST] != MPI_PROC_NULL) {
+        MPI_Irecv(&(plane->data[frame_size]), 1, col_type, neighbours[WEST], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
+        MPI_Isend(&(plane->data[frame_size + 1]), 1, col_type, neighbours[WEST], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
+    }
+    if (neighbours[EAST] != MPI_PROC_NULL) {
+        MPI_Irecv(&(plane->data[frame_size + sizeX + 1]), 1, col_type, neighbours[EAST], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
+        MPI_Isend(&(plane->data[frame_size + sizeX]), 1, col_type, neighbours[EAST], 123, comm, &reqs[*req_count]);
+        (*req_count)++;
     }
 }
 
@@ -120,7 +113,14 @@ int main(int argc, char **argv)
       return 0;
     }
   
+  MPI_Datatype col_type;
+  uint sizeX_local = planes[OLD].size[_x_];
+  uint sizeY_local = planes[OLD].size[_y_];
+  uint frame_size_local = sizeX_local + 2;
   
+  MPI_Type_vector(sizeY_local, 1, frame_size_local, MPI_DOUBLE, &col_type);
+  MPI_Type_commit(&col_type);
+
   int current = OLD;
   double t1 = MPI_Wtime();   /* take wall-clock time */
   uint sizeX = planes[current].size[_x_];
@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 
       /* -------------------------------------- */      
       comm_time -= MPI_Wtime();
-      exchange_halos(&planes[current], neighbours, buffers, myCOMM_WORLD, reqs, &req_count);
+      exchange_halos(&planes[current], neighbours, myCOMM_WORLD, reqs, &req_count, col_type);
       comm_time += MPI_Wtime();
 
       compute_time -= MPI_Wtime();
@@ -163,19 +163,6 @@ int main(int argc, char **argv)
       if(req_count > 0)
           MPI_Waitall(req_count, reqs, MPI_STATUSES_IGNORE);
       wait_time += MPI_Wtime(); 
-
-      if(neighbours[WEST] != MPI_PROC_NULL) {
-          #pragma GCC unroll 4
-          for (uint j = 0; j < sizeY; j++) {
-              planes[current].data[(j+1)*frame_size] = buffers[RECV][WEST][j]; // WEST halo filled
-          }
-      }
-      if(neighbours[EAST] != MPI_PROC_NULL) {
-          #pragma GCC unroll 4
-          for (uint j = 0; j < sizeY; j++) {
-              planes[current].data[(j+1)*frame_size + sizeX + 1] = buffers[RECV][EAST][j]; // EAST halo filled
-          }
-      }
 
       /* --------------------------------------  */
       /* update border points */
@@ -265,6 +252,7 @@ int main(int argc, char **argv)
                   max_timings[3], min_timings[3], sum_timings[3] / Ntasks); // Wait
           fclose(csv_file);
           printf("\nPerformance data appended to timings.csv\n");
+          printf("CSV_DATA, %f,%f,%f,%f\n", max_timings[0], max_timings[1], max_timings[2], max_timings[3]);
       }
       printf("-------------------------------------------\n");
   }
@@ -400,19 +388,14 @@ int memory_allocate ( const int       *neighbours  ,
   // allocate buffers
   //
 
-  buffers_ptr[SEND][NORTH] = NULL; // &(planes_ptr[OLD].data[1*(planes_ptr[OLD].size[_x_]+2) + 1]);
-  buffers_ptr[SEND][SOUTH] = NULL; // &(planes_ptr[OLD].data[(planes_ptr[OLD].size[_y_])*(planes_ptr[OLD].size[_x_]+2) + 1]); 
-  buffers_ptr[RECV][NORTH] = NULL; // &(planes_ptr[OLD].data[0*(planes_ptr[OLD].size[_x_]+2) + 1]);
-  buffers_ptr[RECV][SOUTH] = NULL; // &(planes_ptr[OLD].data[(planes_ptr[OLD].size[_y_]+1)*(planes_ptr[OLD].size[_x_]+2) + 1]);
-
-  if (neighbours[EAST] != MPI_PROC_NULL) {
-    buffers_ptr[SEND][EAST] = (double*)calloc(planes_ptr[OLD].size[_y_], sizeof(double));
-    buffers_ptr[RECV][EAST] = (double*)calloc(planes_ptr[OLD].size[_y_], sizeof(double));
-  }
-  if (neighbours[WEST] != MPI_PROC_NULL) {
-    buffers_ptr[SEND][WEST] = (double*)calloc(planes_ptr[OLD].size[_y_], sizeof(double));
-    buffers_ptr[RECV][WEST] = (double*)calloc(planes_ptr[OLD].size[_y_], sizeof(double)); 
-  }
+  buffers_ptr[SEND][NORTH] = NULL;
+  buffers_ptr[SEND][SOUTH] = NULL;
+  buffers_ptr[RECV][NORTH] = NULL;
+  buffers_ptr[RECV][SOUTH] = NULL;
+  buffers_ptr[SEND][EAST]  = NULL;
+  buffers_ptr[RECV][EAST]  = NULL;
+  buffers_ptr[SEND][WEST]  = NULL;
+  buffers_ptr[RECV][WEST]  = NULL;
   // ··················································
 
   
@@ -879,17 +862,6 @@ void output_full_grid(int Me, int Ntasks, vec2_t mysize, plane_t* plane, MPI_Com
         if ( planes[NEW].data != NULL )
           free (planes[NEW].data);
     }
-
-  if ( buffers != NULL )
-    {
-      for ( int b = 0; b < 2; b++ )
-        // Only free EAST and WEST buffers, since NORTH and SOUTH are pointers into the plane data
-        for ( int d = EAST; d <= WEST; d++ )
-          if ( buffers[b][d] != NULL ) {
-            free (buffers[b][d]);
-          }
-    }
-
       
   return 0;
 }

@@ -1,45 +1,36 @@
 #!/bin/bash
-#SBATCH --job-name=strong_scale
+#SBATCH --job-name=strong_job
 #SBATCH --partition=dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
 #SBATCH --time=00:20:00
-#SBATCH --array=0-5 # 6 jobs for 1, 2, 4, 8, 16, 32 nodes
 
-# --- Experiment Configuration ---
-EXEC="../code/stencil_parallel"
-SIZE_X=40000  # Fixed problem size
-SIZE_Y=40000
-ITER=200
-OUT_FILE="plots/strong/strong_scaling_results.csv"
+# --- Base Directory ---
+BASE_DIR=$SLURM_SUBMIT_DIR
 
-# --- Parallel Configuration ---
-# Set the optimal number of threads you found in the OpenMP test
-THREADS_PER_TASK=8
-# Set how many MPI tasks you want to run on each node
-TASKS_PER_NODE=14
+# --- Test Configuration (values are passed from the launcher) ---
+EXEC="$BASE_DIR/code/stencil_parallel"
+OUT_FILE="$BASE_DIR/plots/strong_scaling_results.csv"
 
-# --- Modules and Environment ---
-module load gcc/12.2.0
+# --- Execution Environment ---
+module purge
 module load openmpi/4.1.6--gcc--12.2.0
 export OMP_NUM_THREADS=$THREADS_PER_TASK
 export OMP_PLACES=threads
 export OMP_PROC_BIND=close
 
-# --- SLURM Job Array Logic ---
-declare -a nodes_array=(1 2 4 8 16 32)
-NODES=${nodes_array[$SLURM_ARRAY_TASK_ID]}
-TOTAL_TASKS=$(( $TASKS_PER_NODE * $NODES ))
+echo "Running Strong Scaling on $SLURM_NNODES nodes with $SLURM_NTASKS tasks..."
 
-# The first job creates the CSV header
-if [ $SLURM_ARRAY_TASK_ID -eq 0 ]; then
-    echo "Nodes,Total_Tasks,Total_Time" > $OUT_FILE
+# --- Execution and Result Capture ---
+PROGRAM_OUTPUT=$(srun $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER)
+METRICS_LINE=$(echo "$PROGRAM_OUTPUT" | grep "CSV_DATA")
+TOTAL_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $2}')
+COMM_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $3}')
+COMP_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $4}')
+WAIT_TIME=$(echo "$METRICS_LINE" | awk -F',' '{print $5}')
+
+# --- Safe Result Writing ---
+if [ -z "$TOTAL_TIME" ]; then
+    flock -x $OUT_FILE -c "echo $SLURM_NNODES,$SLURM_NTASKS,ERROR,ERROR,ERROR,ERROR >> $OUT_FILE"
+else
+    flock -x $OUT_FILE -c "echo $SLURM_NNODES,$SLURM_NTASKS,$TOTAL_TIME,$COMM_TIME,$COMP_TIME,$WAIT_TIME >> $OUT_FILE"
 fi
-
-echo "Running Strong Scaling on $NODES nodes with $TOTAL_TASKS tasks..."
-
-# Execute and parse the max total time
-TIME=$(srun -N $NODES -n $TOTAL_TASKS --ntasks-per-node=$TASKS_PER_NODE --cpus-per-task=$THREADS_PER_TASK \
-     $EXEC -x $SIZE_X -y $SIZE_Y -n $ITER | grep "Total Time" | awk '{print $4}')
-
-# Append the result safely to the CSV file
-flock -x $OUT_FILE -c "echo $NODES,$TOTAL_TASKS,$TIME >> $OUT_FILE"

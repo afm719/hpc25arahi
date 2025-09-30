@@ -1,94 +1,97 @@
+# ==============================================================================
+# plot_results_simple.py
+#
+# A simplified Python script to generate Speedup and Efficiency plots.
+# The filenames are hardcoded inside the script.
+#
+# Usage:
+# python plot_results.py
+# (No arguments needed)
+# ==============================================================================
+
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
+import os
 
-# Set a general style for the plots
-plt.style.use('seaborn-v0_8-whitegrid')
+def generate_plots(csv_file_path, x_axis_column):
+    """
+    Reads a CSV file, calculates speedup and efficiency, and generates plots.
+    """
+    try:
+        df = pd.read_csv(csv_file_path)
+    except FileNotFoundError:
+        print(f"--> WARNING: The file '{csv_file_path}' was not found. Skipping.")
+        return
 
-def plot_openmp_scaling(filename="openmp_scaling_results.csv"):
-    """Generates the speedup plot for OpenMP scaling."""
-    df = pd.read_csv(filename)
+    # Remove any rows with errors before processing
+    df = df[~df.isin(['ERROR', 'ERROR_TIME_NOT_FOUND']).any(axis=1)]
+    # Convert columns to numeric, errors='coerce' will turn non-numbers into NaN
+    df['Total_Time'] = pd.to_numeric(df['Total_Time'], errors='coerce')
+    df = df.dropna()
+
+    if df.empty:
+        print(f"--> WARNING: No valid data found in '{csv_file_path}' after cleaning. Skipping.")
+        return
+
+    # Sort the data by the resource count for correct plotting
+    df = df.sort_values(by=x_axis_column).reset_index(drop=True)
     
-    # Calculate Speedup
-    time_1_thread = df.loc[df['Threads'] == 1, 'Total_Time'].iloc[0]
-    df['Speedup'] = time_1_thread / df['Total_Time']
+    print(f"\nProcessing data from: {csv_file_path}")
+    print(df)
     
+    # --- Calculate Speedup and Efficiency ---
+    baseline_time = df['Total_Time'].iloc[0]
+    df['Speedup'] = baseline_time / df['Total_Time']
+    df['Efficiency'] = df['Speedup'] / df[x_axis_column]
+
+    # --- Generate Speedup Plot ---
     plt.figure(figsize=(10, 6))
-    plt.plot(df['Threads'], df['Speedup'], 'o-', label='Measured Speedup')
-    plt.plot(df['Threads'], df['Threads'], '--', label='Ideal Speedup', color='gray')
+    plt.plot(df[x_axis_column], df['Speedup'], 'o-', label='Speedup Real', color='blue')
+    plt.plot(df[x_axis_column], df[x_axis_column], '--', label='Speedup Ideal', color='red')
     
-    plt.title('OpenMP Scalability')
-    plt.xlabel('Number of Threads')
-    plt.ylabel('Speedup')
-    plt.xscale('log', base=2)
-    plt.yscale('log', base=2)
-    plt.xticks(df['Threads'], df['Threads']) # Set all x-ticks
+    plt.title(f'Speedup vs. Number of {x_axis_column}')
+    plt.xlabel(f'Number of {x_axis_column}')
+    plt.ylabel('Speedup (Acceleration)')
+    plt.grid(True, which='both', linestyle='--')
     plt.legend()
-    plt.savefig('openmp_scaling.png')
-    print(f"Plot saved to openmp_scaling.png")
-
-def plot_strong_scaling(filename="strong_scaling_results.csv"):
-    """Generates speedup and efficiency plots for Strong Scaling."""
-    df = pd.read_csv(filename).sort_values(by='Nodes').reset_index()
-
-    # Calculate Speedup
-    time_1_node = df.loc[df['Nodes'] == 1, 'Total_Time'].iloc[0]
-    df['Speedup'] = time_1_node / df['Total_Time']
+    plt.xticks(df[x_axis_column])
     
-    # Calculate Efficiency
-    df['Efficiency'] = df['Speedup'] / df['Nodes']
-    
-    # Speedup Plot
-    plt.figure(figsize=(10, 6))
-    plt.plot(df['Nodes'], df['Speedup'], 'o-', label='Measured Speedup')
-    plt.plot(df['Nodes'], df['Nodes'], '--', label='Ideal Speedup', color='gray')
-    plt.title('Strong Scaling Speedup')
-    plt.xlabel('Number of Nodes')
-    plt.ylabel('Speedup')
-    plt.xscale('log', base=2)
-    plt.yscale('log', base=2)
-    plt.xticks(df['Nodes'], df['Nodes'])
-    plt.legend()
-    plt.savefig('strong_scaling_speedup.png')
-    print(f"Plot saved to strong_scaling_speedup.png")
+    base_name = os.path.splitext(os.path.basename(csv_file_path))[0]
+    speedup_plot_path = f"plots/{base_name}_speedup.png"
+    plt.savefig(speedup_plot_path)
+    print(f"Speedup plot saved to: {speedup_plot_path}")
+    plt.close()
 
-    # Efficiency Plot
+    # --- Generate Efficiency Plot ---
     plt.figure(figsize=(10, 6))
-    plt.plot(df['Nodes'], df['Efficiency'] * 100, 'o-', label='Measured Efficiency')
-    plt.axhline(100, linestyle='--', color='gray', label='Ideal Efficiency')
-    plt.title('Strong Scaling Efficiency')
-    plt.xlabel('Number of Nodes')
-    plt.ylabel('Efficiency (%)')
-    plt.xscale('log', base=2)
-    plt.xticks(df['Nodes'], df['Nodes'])
+    plt.plot(df[x_axis_column], df['Efficiency'] * 100, 'o-', label='Efficiency Real', color='green')
+    plt.axhline(y=100, color='red', linestyle='--', label='Ideal Efficiency (100%)')
+
+    plt.title(f'Efficiency vs. Number of {x_axis_column}')
+    plt.xlabel(f'Number of {x_axis_column}')
+    plt.ylabel('Parallel Efficiency (%)')
     plt.ylim(0, 110)
+    plt.grid(True, which='both', linestyle='--')
     plt.legend()
-    plt.savefig('strong_scaling_efficiency.png')
-    print(f"Plot saved to strong_scaling_efficiency.png")
+    plt.xticks(df[x_axis_column])
 
-def plot_weak_scaling(filename="weak_scaling_results.csv"):
-    """Generates the efficiency plot for Weak Scaling."""
-    df = pd.read_csv(filename).sort_values(by='Nodes').reset_index()
-
-    # Calculate Efficiency
-    time_1_node = df.loc[df['Nodes'] == 1, 'Total_Time'].iloc[0]
-    df['Efficiency'] = time_1_node / df['Total_Time']
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(df['Nodes'], df['Efficiency'] * 100, 'o-', label='Measured Efficiency')
-    plt.axhline(100, linestyle='--', color='gray', label='Ideal Efficiency')
-    plt.title('Weak Scaling Efficiency')
-    plt.xlabel('Number of Nodes')
-    plt.ylabel('Efficiency (%)')
-    plt.xscale('log', base=2)
-    plt.xticks(df['Nodes'], df['Nodes'])
-    plt.ylim(0, 110)
-    plt.legend()
-    plt.savefig('weak_scaling_efficiency.png')
-    print(f"Plot saved to weak_scaling_efficiency.png")
+    efficiency_plot_path = f"plots/{base_name}_efficiency.png"
+    plt.savefig(efficiency_plot_path)
+    print(f"Efficiency plot saved to: {efficiency_plot_path}")
+    plt.close()
 
 if __name__ == "__main__":
-    # Call the functions to generate all plots
-    plot_openmp_scaling()
-    plot_strong_scaling()
-    plot_weak_scaling()
+    # --- List of files to process ---
+    # The script will loop through these files automatically.
+    # Just add or remove files from this dictionary.
+    files_to_plot = {
+        "plots/openmp_scaling_metrics.csv": "Threads",
+        "plots/strong_scaling_results.csv": "Nodes",
+        "plots/weak_scaling_results.csv": "Nodes"
+    }
+
+    print("Starting plot generation...")
+    for csv_path, x_column in files_to_plot.items():
+        generate_plots(csv_path, x_column)
+    
+    print("\nAll plot generation tasks are complete!")
