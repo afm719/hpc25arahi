@@ -57,7 +57,7 @@ extern int update_plane(const int,
  * and receives for all four directions. This allows for overlapping communication
  * with computation.
  */
-extern void exchange_halos(plane_t* plane, uint neighbours[4], MPI_Comm comm, MPI_Request* reqs, int* req_count, MPI_Datatype col_type)
+extern void exchange_halos(plane_t* plane, uint neighbours[4], MPI_Comm comm, MPI_Request* reqs, int* req_count, MPI_Datatype col_type);
 
 extern int get_total_energy(plane_t *,
                             double *);
@@ -265,65 +265,107 @@ inline int get_total_energy(plane_t *plane, double *energy)
 inline int update_interior(const vec2_t   N,         // the grid of MPI tasks
                           const plane_t *oldplane,
                                 plane_t *newplane) {
-    uint register fxsize = oldplane->size[_x_] + 2;
-    uint register xsize = oldplane->size[_x_];
-    uint register ysize = oldplane->size[_y_];
-    double* restrict old = oldplane->data;
-    double* restrict new = newplane->data;  
+    uint sizeX = oldplane->size[_x_];
+    uint sizeY = oldplane->size[_y_];
+    uint frame_size = sizeX + 2;
+    const double * restrict old_data = oldplane->data;
+    double * restrict new_data = newplane->data;
 
-#define IDX(i, j) ((j) * fxsize + (i))
-    #pragma omp parallel for
-    for (uint j = 2; j < ysize; j++) { 
-        for (uint i = 2; i < xsize; i++) { 
-            new[IDX(i, j)] = old[IDX(i, j)] / 2.0 +
-                             (old[IDX(i - 1, j)] + old[IDX(i + 1, j)] +
-                              old[IDX(i, j - 1)] + old[IDX(i, j + 1)]) / 4.0 / 2.0;
+    #pragma omp parallel for collapse(2)
+    for (uint y_block = 2; y_block < sizeY; y_block += TILE_DIM) {
+        for (uint x_block = 2; x_block < sizeX; x_block += TILE_DIM) {
+            
+            for (uint y = y_block; y < y_block + TILE_DIM && y < sizeY; y++) {
+                for (uint x = x_block; x < x_block + TILE_DIM && x < sizeX; x++) {
+                    
+                    uint index = y * frame_size + x;
+                    
+                    double laplacian = old_data[index - 1] + old_data[index + 1] +
+                                       old_data[index - frame_size] + old_data[index + frame_size] -
+                                       4.0 * old_data[index];
+                    
+                    double new_value = old_data[index] + 0.1 * laplacian;
+
+                    #if defined(ARTIFICIAL_WORKLOAD) && ARTIFICIAL_WORKLOAD > 0
+                    volatile double dummy = 0.0;
+                    for (int k = 0; k < ARTIFICIAL_WORKLOAD; ++k) {
+                        dummy += 0.0001;
+                    }
+                    new_value += dummy * 0.0;
+                    #endif
+
+                    new_data[index] = new_value;
+                }
+            }
         }
     }
-    #undef IDX
     return 0;
-
 }
 
 inline int update_borders(const int periodic,
                           const vec2_t N,         // the grid of MPI tasks
                           const plane_t *oldplane,
                                 plane_t *newplane) {
-    uint register fxsize = oldplane->size[_x_] + 2;
-    uint register fysize = oldplane->size[_y_] + 2;
-    uint register xsize = oldplane->size[_x_];
-    uint register ysize = oldplane->size[_y_];
-    double* restrict old = oldplane->data;
-    double* restrict new = newplane->data;
+    uint sizeX = oldplane->size[_x_];
+    uint sizeY = oldplane->size[_y_];
+    uint frame_size = sizeX + 2;
+    const double * restrict old_data = oldplane->data;
+    double * restrict new_data = newplane->data;
 
-#define IDX(i, j) ((j) * fxsize + (i))  
-
-    // Update top and bottom borders (j=1 and j=ysize)
     #pragma omp parallel for
-    for (uint i = 1; i <= xsize; i++) {
-        // Top border (j=1), using halo cell at j=0
-        new[IDX(i, 1)] = old[IDX(i, 1)] / 2.0 +
-                         (old[IDX(i - 1, 1)] + old[IDX(i + 1, 1)] +
-                          old[IDX(i, 0)] + old[IDX(i, 2)]) / 4.0 / 2.0;
-        // Bottom border (j=ysize), using halo cell at j=ysize+1
-        new[IDX(i, ysize)] = old[IDX(i, ysize)] / 2.0 +
-                             (old[IDX(i - 1, ysize)] + old[IDX(i + 1, ysize)] +
-                              old[IDX(i, ysize - 1)] + old[IDX(i, ysize + 1)]) / 4.0 / 2.0;
+    for (uint x_block = 1; x_block < sizeX + 1; x_block += TILE_DIM) {
+        for (uint x = x_block; x < x_block + TILE_DIM && x < sizeX + 1; x++) {
+            uint index_n = 1 * frame_size + x;
+            double laplacian_n = old_data[index_n - 1] + old_data[index_n + 1] + old_data[index_n - frame_size] + old_data[index_n + frame_size] - 4.0 * old_data[index_n];
+            double new_value_n = old_data[index_n] + 0.1 * laplacian_n;
+            
+            #if defined(ARTIFICIAL_WORKLOAD) && ARTIFICIAL_WORKLOAD > 0
+            volatile double dummy_n = 0.0;
+            for (int k = 0; k < ARTIFICIAL_WORKLOAD; ++k) { dummy_n += 0.0001; }
+            new_value_n += dummy_n * 0.0;
+            #endif
+            new_data[index_n] = new_value_n;
+
+
+            uint index_s = sizeY * frame_size + x;
+            double laplacian_s = old_data[index_s - 1] + old_data[index_s + 1] + old_data[index_s - frame_size] + old_data[index_s + frame_size] - 4.0 * old_data[index_s];
+            double new_value_s = old_data[index_s] + 0.1 * laplacian_s;
+
+            #if defined(ARTIFICIAL_WORKLOAD) && ARTIFICIAL_WORKLOAD > 0
+            volatile double dummy_s = 0.0;
+            for (int k = 0; k < ARTIFICIAL_WORKLOAD; ++k) { dummy_s += 0.0001; }
+            new_value_s += dummy_s * 0.0;
+            #endif
+            new_data[index_s] = new_value_s;
+        }
     }
 
-    // Update left and right borders (i=1 and i=xsize), excluding corners
-    // which were already computed in the loop above.
     #pragma omp parallel for
-    for (uint j = 2; j < ysize; j++) {
-        // Left border (i=1), using halo cell at i=0
-        new[IDX(1, j)] = old[IDX(1, j)] / 2.0 +
-                         (old[IDX(0, j)] + old[IDX(2, j)] +
-                          old[IDX(1, j - 1)] + old[IDX(1, j + 1)]) / 4.0 / 2.0;
-        // Right border (i=xsize), using halo cell at i=xsize+1
-        new[IDX(xsize, j)] = old[IDX(xsize, j)] / 2.0 +
-                             (old[IDX(xsize - 1, j)] + old[IDX(xsize + 1, j)] +
-                              old[IDX(xsize, j - 1)] + old[IDX(xsize, j + 1)]) / 4.0 / 2.0;
-    }   
-#undef IDX
+    for (uint y_block = 2; y_block < sizeY; y_block += TILE_DIM) {
+        for (uint y = y_block; y < y_block + TILE_DIM && y < sizeY; y++) {
+            uint index_w = y * frame_size + 1;
+            double laplacian_w = old_data[index_w - 1] + old_data[index_w + 1] + old_data[index_w - frame_size] + old_data[index_w + frame_size] - 4.0 * old_data[index_w];
+            double new_value_w = old_data[index_w] + 0.1 * laplacian_w;
+
+            #if defined(ARTIFICIAL_WORKLOAD) && ARTIFICIAL_WORKLOAD > 0
+            volatile double dummy_w = 0.0;
+            for (int k = 0; k < ARTIFICIAL_WORKLOAD; ++k) { dummy_w += 0.0001; }
+            new_value_w += dummy_w * 0.0;
+            #endif
+            new_data[index_w] = new_value_w;
+
+            uint index_e = y * frame_size + sizeX;
+            double laplacian_e = old_data[index_e - 1] + old_data[index_e + 1] + old_data[index_e - frame_size] + old_data[index_e + frame_size] - 4.0 * old_data[index_e];
+            double new_value_e = old_data[index_e] + 0.1 * laplacian_e;
+            
+            #if defined(ARTIFICIAL_WORKLOAD) && ARTIFICIAL_WORKLOAD > 0
+            volatile double dummy_e = 0.0;
+            for (int k = 0; k < ARTIFICIAL_WORKLOAD; ++k) { dummy_e += 0.0001; }
+            new_value_e += dummy_e * 0.0;
+            #endif
+            new_data[index_e] = new_value_e;
+        }
+    }
+
     return 0;
 }   

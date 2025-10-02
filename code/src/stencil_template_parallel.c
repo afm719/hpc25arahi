@@ -9,8 +9,8 @@
 
 #include "stencil_template_parallel.h"
 
-
-
+#define ARTIFICIAL_WORKLOAD 150
+#define TILE_DIM 32
 /**
  * Manages the exchange of halo (ghost) cell data between a process and its neighbors.
  *
