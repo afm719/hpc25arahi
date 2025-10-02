@@ -6,14 +6,14 @@ echo "Submitting Weak Scaling jobs..."
 BASE_SIZE_PER_NODE=10000
 ITER=200
 THREADS_PER_TASK=8
-TASKS_PER_NODE=12 # 12*8 = 96 cores per node, a safe value
+TASKS_PER_NODE=14 # 14*8 = 112 cores per node, a safe value
 
 # Create the CSV header once before submitting any jobs
 # We add Size_X and Size_Y to see how the problem grows
 echo "Nodes,Total_Tasks,Size_X,Size_Y,Total_Time,Comm_Time,Compute_Time,Wait_Time" > plots/weak_scaling_results.csv
 
 # Loop to submit one job for each node count
-for NODES in 1 2 4 8 16 32; do
+for NODES in 1 2 4 8 16; do
     TOTAL_TASKS=$((NODES * TASKS_PER_NODE))
     
     # Calculate the global problem size for this run.

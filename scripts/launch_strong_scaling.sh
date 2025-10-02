@@ -2,11 +2,11 @@
 echo "Submitting Strong Scaling jobs..."
 
 # --- Test Configuration ---
-SIZE_X=10000
-SIZE_Y=10000
-ITER=200
+SIZE_X=15000
+SIZE_Y=15000
+ITER=500
 THREADS_PER_TASK=8
-TASKS_PER_NODE=12 # 12*8 = 96 cores per node, a safe value
+TASKS_PER_NODE=14 # 14*8 = 96 cores per node, a safe value
 
 # Create the CSV header once before submitting any jobs
 echo "Nodes,Total_Tasks,Total_Time,Comm_Time,Compute_Time,Wait_Time" > plots/strong_scaling_results.csv

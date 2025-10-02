@@ -2,7 +2,7 @@
 #SBATCH --job-name=weak_scale
 #SBATCH --partition=dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
-#SBATCH --time=00:30:00
+#SBATCH --time=00:45:00
 
 
 # --- Base Directory ---

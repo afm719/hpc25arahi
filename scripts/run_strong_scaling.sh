@@ -2,7 +2,7 @@
 #SBATCH --job-name=strong_job
 #SBATCH --partition=dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
-#SBATCH --time=00:20:00
+#SBATCH --time=00:45:00
 
 # --- Base Directory ---
 BASE_DIR=$SLURM_SUBMIT_DIR
