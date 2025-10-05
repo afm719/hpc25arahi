@@ -58,7 +58,110 @@ Within each MPI process, the loops in `update_interior` and `update_borders` are
 
 -----
 
-## Performance Analysis Summary
+## Quick Command Guide for the Project on Leonardo
+
+This guide summarizes the entire workflow, from accessing the cluster to running all performance and visualization tests.
+
+### 1\. Accessing the Cluster
+
+Connect to the Leonardo login node using `ssh` with your user credentials.
+
+```bash
+ssh afernan3@login.leonardo.cineca.it
+```
+
+-----
+
+### 2\. Compiling the Code
+
+The parallel code is compiled by submitting a job to the system. This ensures a clean and correct compilation environment.
+
+```bash
+# Submit the compilation script
+sbatch scripts/compile.sh
+```
+
+To check the output and verify that the compilation was successful, view the Slurm output file:
+
+```bash
+# Replace XXXXXX with the job ID
+cat slurm-XXXXXX.out
+```
+
+-----
+
+### 3\. Running the Performance Tests
+
+Each test is launched using its specific script.
+
+#### OpenMP Scaling Test
+
+This script submits a job array to test performance with different thread counts (1, 2, 4, 8, 16, 32, 56, 84, 112) on a single node.
+
+```bash
+sbatch scripts/run_openmp_scaling.sh
+```
+
+  * **Result:** Data is saved to `plots/openmp_scaling/openmp_scaling_metrics.csv`.
+
+#### Strong Scaling Test
+
+This script launches jobs on 1, 2, 4, 8, and 16 nodes with a fixed, large problem size. The most successful configuration we found was:
+
+  * **Problem Size:** `15000x15000`
+  * **MPI Tasks per Node:** 8
+  * **OpenMP Threads per Task:** 14
+
+<!-- end list -->
+
+```bash
+# Grant execution permissions to the launcher script
+chmod +x launch_strong_scaling.sh
+
+# Run the launcher
+sbatch ./launch_strong_scaling.sh
+```
+
+  * **Result:** Data is appended to `plots/strong_scaling_results.csv`.
+
+#### Weak Scaling Test
+
+This script launches jobs on multiple nodes, increasing the problem size proportionally.
+
+  * **Base Size per Node:** `10000x10000`
+
+<!-- end list -->
+
+```bash
+# Grant execution permissions to the launcher script
+chmod +x launch_weak_scaling.sh
+
+# Run the launcher
+sbatch ./launch_weak_scaling.sh
+```
+
+  * **Result:** Data is appended to `plots/weak_scaling_results.csv`.
+
+-----
+
+
+
+### 3\. Job Monitoring & Management
+
+Useful commands for managing your jobs on the cluster.
+
+  * **View the status of your jobs in the queue:**
+    ```bash
+    squeue -u afernan3
+    ```
+  * **Cancel a specific job:**
+    ```bash
+    scancel [JOB_ID]
+    ```
+  * **Cancel ALL of your jobs:**
+    ```bash
+    scancel -u afernan3
+    ```
 
 The application was benchmarked to evaluate its scalability.
 
@@ -68,8 +171,3 @@ The application was benchmarked to evaluate its scalability.
 
 -----
 
-## Future Work
-
-  - **GPU Acceleration:** Port the stencil computation kernel to CUDA or OpenACC to leverage the massive parallelism of GPUs.
-  - **Load Balancing:** For non-uniform workloads, implement a dynamic load balancing scheme to distribute work more evenly.
-  - **Advanced I/O:** Implement parallel I/O using MPI-IO or libraries like HDF5 to avoid bottlenecks when writing large output files.
