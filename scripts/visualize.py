@@ -46,9 +46,7 @@ def parse_grid_data(filename):
                 grids.append(grid)
             elif grid.shape == expected_shape:
                 grids.append(grid)
-            # If the shape does not match, the frame is simply ignored.
-
-    # Report how many frames were discarded
+        
     bad_frames = initial_grid_count - len(grids)
     if bad_frames > 0:
         print(f"⚠️  Warning: {bad_frames} frames were discarded due to inconsistent sizes.")
@@ -58,8 +56,7 @@ def parse_grid_data(filename):
 # --- CONFIGURATION ---
 LOG_FILE_PATH = "code/viz_data.log"
 
-# --- ✨ Try out some cool new color maps! ---
-# 'plasma', 'inferno', 'magma', 'cividis', 'hot', 'jet'
+
 COLOR_MAP = 'plasma'
 
 # --- MAIN CODE ---
@@ -81,7 +78,6 @@ if grid_data:
     def update(frame):
         ax.clear()
         current_grid = grid_data[frame]
-        # Use vmin and vmax in plot_surface to stabilize the color bar
         ax.plot_surface(X, Y, current_grid, cmap=COLOR_MAP, edgecolor='none', vmin=0, vmax=max_energy)
         
         ax.set_title('3D Energy Diffusion', fontsize=16)
@@ -93,7 +89,6 @@ if grid_data:
         ax.text2D(0.05, 0.95, f'Time Step: {frame}', transform=ax.transAxes, fontsize=12,
                   bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5))
         
-        # You can also play with the camera angle here (elevation and azimuth)
         ax.view_init(elev=45, azim=-120)
 
     ani = animation.FuncAnimation(fig, update, frames=len(grid_data), interval=100)
