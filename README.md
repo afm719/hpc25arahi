@@ -36,7 +36,7 @@ To calculate the values at the boundaries of a sub-grid, each process needs data
 1.  Each process allocates extra memory around its local grid—these are the "halos" or "ghost cells".
 2.  Before computation, each process exchanges its boundary data with its neighbors.
 3.  The received data is stored in the corresponding halo cells.
-4.  This allows the stencil computation at the boundaries to proceed as if it were on a larger, continuous grid.
+4.  This allows the stencil computation at the boundaries to proceed as if it re on a larger, continuous grid.
 
 ### Computation/Communication Overlap
 
@@ -54,7 +54,7 @@ This strategy ensures the CPU is kept busy with useful computation instead of id
 Within each MPI process, the loops in `update_interior` and `update_borders` are parallelized with OpenMP. To maximize performance, a **tiling** (or cache-blocking) technique is used.
 
   - **Problem:** Iterating over a large grid row-by-row causes poor data locality, leading to frequent cache misses.
-  - **Solution:** The local grid is partitioned into small, cache-friendly square tiles. OpenMP threads work on one tile at a time. This ensures that data loaded into the fast L1/L2 cache is reused multiple times before being evicted, significantly reducing trips to the much slower main memory.
+  - **Solution:** The local grid is partitioned into small, cache-friendly square tiles. OpenMP threads work on one tile at a time. This ensures that data loaded into the fast L1/L2 cache is reused multiple times before being evicted, significantly reducing trips to the much slor main memory.
 
 -----
 
@@ -106,7 +106,7 @@ sbatch scripts/run_openmp_scaling.sh
 
 #### Strong Scaling Test
 
-This script launches jobs on 1, 2, 4, 8, and 16 nodes with a fixed, large problem size. The most successful configuration we found was:
+This script launches jobs on 1, 2, 4, 8, and 16 nodes with a fixed, large problem size. The most successful configuration I found was:
 
   * **Problem Size:** `15000x15000`
   * **MPI Tasks per Node:** 8
