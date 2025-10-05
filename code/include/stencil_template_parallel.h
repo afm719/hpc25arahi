@@ -29,6 +29,9 @@
 #define _x_ 0
 #define _y_ 1
 
+#define ARTIFICIAL_WORKLOAD 500
+#define TILE_DIM 32
+
 // Add typedef for 2D coordinate/size arrays
 typedef unsigned int vec2_t[2];
 

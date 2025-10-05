@@ -9,7 +9,7 @@
 
 #include "stencil_template_parallel.h"
 
-#define ARTIFICIAL_WORKLOAD 150
+#define ARTIFICIAL_WORKLOAD 500
 #define TILE_DIM 32
 /**
  * Manages the exchange of halo (ghost) cell data between a process and its neighbors.
@@ -196,9 +196,18 @@ int main(int argc, char **argv)
                 }
                 fprintf(f, "%d,%f,%f\n", Ntasks, total_time, compute_time);
                 fclose(f);
-}
+            }
         }
 
+      }
+
+      if (iter % 20 == 0) {
+          if (Rank == 0) {
+              printf("--- Iteration %d ---\n", iter);
+          }
+          MPI_Barrier(myCOMM_WORLD); 
+          
+          output_full_grid(Rank, Ntasks, planes[!current].size, &planes[!current], myCOMM_WORLD);
       }
   
 	
@@ -776,7 +785,7 @@ int initialize_sources( int       Me,
 
 {
 
-  srand48(time(NULL) ^ Me);
+  srand48(12345 ^ Me);
   int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
   
   if ( Me == 0 )
@@ -809,43 +818,94 @@ int initialize_sources( int       Me,
   return 0;
 }
 
-void output_full_grid(int Me, int Ntasks, vec2_t mysize, plane_t* plane, MPI_Comm comm) {
-    // This function is for debugging and visualization.
-    // It gathers the subgrids from all processes to rank 0 and prints the full grid.
 
-    // Only rank 0 will allocate memory for the full grid and print.
+
+
+void output_full_grid(int Rank, int Ntasks, vec2_t mysize, plane_t* plane, MPI_Comm myCOMM_WORLD) 
+{
+    // --- FINAL CORRECTED LOGIC ---
+
+    // 1. Create a temporary Cartesian communicator from the main one.
+    // This is the key to solving the MPI_ERR_TOPOLOGY error without changing the call in main.
+    MPI_Comm cart_comm;
+    int dims[2] = {0, 0};
+    int periods[2] = {0, 0};
+    MPI_Dims_create(Ntasks, 2, dims);
+    MPI_Cart_create(myCOMM_WORLD, 2, dims, periods, 1, &cart_comm);
+
+    int Me; // Local rank for safety
+    MPI_Comm_rank(cart_comm, &Me);
+
+    // Get the process topology
+    int nRows = dims[0];
+    int nCols = dims[1];
+
+    // Get the local size from the 'plane' struct
+    uint local_sizeX = plane->size[_x_];
+    uint local_sizeY = plane->size[_y_];
+    uint global_sizeX = local_sizeX * nCols;
+    uint global_sizeY = local_sizeY * nRows;
+
+    // Only the Rank 0 process will handle receiving and printing
     if (Me == 0) {
-        // Note: This is a simplified implementation for debugging.
-        // A real implementation would need to know the global size and the
-        // size of each process's subgrid to assemble it correctly.
-        // For now, we'll just print the local grid of each process sequentially.
-        printf("--- Full Grid Output (Process-by-Process) ---\n");
-    }
+        // Create a full canvas to assemble the final grid
+        double* full_grid = (double*)malloc(sizeof(double) * (global_sizeX + 2) * (global_sizeY + 2));
+        if (full_grid == NULL) {
+            perror("Failed to allocate memory for the full grid");
+            MPI_Abort(cart_comm, 1);
+        }
 
-    for (int rank = 0; rank < Ntasks; ++rank) {
-        MPI_Barrier(comm);
-        if (Me == rank) {
-            printf("--- Rank %d (local size %u x %u) ---\n", Me, mysize[_x_], mysize[_y_]);
-            uint sizeX = plane->size[_x_];
-            uint sizeY = plane->size[_y_];
-            uint frame_width = sizeX + 2;
+        // Copy Rank 0's own data into the top-left corner
+        for (uint j = 0; j < local_sizeY + 2; ++j) {
+            for (uint i = 0; i < local_sizeX + 2; ++i) {
+                full_grid[j * (global_sizeX + 2) + i] = plane->data[j * (local_sizeX + 2) + i];
+            }
+        }
 
-            // Print with halo cells for context
-            for (uint j = 0; j < sizeY + 2; ++j) {
-                for (uint i = 0; i < sizeX + 2; ++i) {
-                    printf("%6.2f ", plane->data[j * frame_width + i]);
-                }
-                printf("\n");
+        // Receive data from other processes and place it correctly
+        for (int source_rank = 1; source_rank < Ntasks; ++source_rank) {
+            int coords[2];
+            MPI_Cart_coords(cart_comm, source_rank, 2, coords); 
+            int row_offset = coords[0] * local_sizeY;
+            int col_offset = coords[1] * local_sizeX;
+            
+            for (uint j = 1; j <= local_sizeY; ++j) {
+                MPI_Recv(&full_grid[(row_offset + j) * (global_sizeX + 2) + col_offset + 1], 
+                         local_sizeX, MPI_DOUBLE, source_rank, j, cart_comm, MPI_STATUS_IGNORE);
+            }
+        }
+
+        // Print the complete, assembled grid
+        printf("--- Global Grid (assembled size %u x %u) ---\n", global_sizeX, global_sizeY);
+        for (uint j = 1; j <= global_sizeY; ++j) {
+            for (uint i = 1; i <= global_sizeX; ++i) {
+                printf("%6.2f ", full_grid[j * (global_sizeX + 2) + i]);
             }
             printf("\n");
-            fflush(stdout);
+        }
+        fflush(stdout);
+        free(full_grid);
+
+    } else {
+        // All other processes (Rank > 0) send their data to Rank 0
+        for (uint j = 1; j <= local_sizeY; ++j) {
+            MPI_Send(&(plane->data[j * (local_sizeX + 2) + 1]), local_sizeX, MPI_DOUBLE, 0, j, cart_comm);
         }
     }
-    MPI_Barrier(comm);
+
+    // 2. Free the temporary communicator
+    MPI_Comm_free(&cart_comm);
+
+    // Barrier to synchronize before printing the final separator
+    MPI_Barrier(myCOMM_WORLD);
     if (Me == 0) {
         printf("--- End of Full Grid Output ---\n");
     }
 }
+
+
+
+
 
 
  int memory_release ( plane_t   *planes,
@@ -893,3 +953,6 @@ int output_energy_stat ( int step, plane_t *plane, double budget, int Me, MPI_Co
   
   return 0;
 }
+
+
+

@@ -271,6 +271,7 @@ int initialize_sources( uint      size[2],
  *
  */
 {
+  srand48(12345);
   *Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
   for ( int s = 0; s < Nsources; s++ )
     {
