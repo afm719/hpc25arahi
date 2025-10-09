@@ -4,6 +4,10 @@ This repository contains a high-performance, hybrid MPI and OpenMP implementatio
 
 The primary goal was to parallelize a serial C template to create a robust, scalable application capable of running efficiently on a modern supercomputing architecture. The implementation includes advanced optimization techniques such as computation/communication overlap and cache tiling.
 
+
+![energy_diffusion_3d_animated](https://github.com/user-attachments/assets/7e9517c2-6b88-40b9-892f-12ea0e83295a)
+
+
 ## Features 
 
   - **Hybrid Parallelization:** Combines MPI for distributed-memory parallelism across nodes and OpenMP for shared-memory parallelism within a single node.
